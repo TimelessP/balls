@@ -2,6 +2,9 @@
 
 This project is a 2D ball simulation built using Python 3.11 and Pygame. It simulates a set of ball particles with gravity, collision detection and resolution, interactive ball throwing, and a special container mode that captures balls. The simulation demonstrates advanced physics interactions and user interactivity.
 
+![screenshot.png](screenshot.png)
+
+
 ## Features
 
 - **Physics Integration**
