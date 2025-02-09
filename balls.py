@@ -5,7 +5,6 @@ import math
 # === Configuration Constants ===
 pygame.init()
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 800, 800
-# Fullscreen resolution as specified:
 FULLSCREEN_WIDTH, FULLSCREEN_HEIGHT = 1920, 1080
 WIDTH, HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
 FPS = 60
@@ -14,21 +13,28 @@ clock = pygame.time.Clock()
 # Simulation parameters:
 BALL_COUNT = 500
 BALL_RADIUS = 15             # Normal ball radius
-ENLARGED_RADIUS = 100        # Radius when a ball is held
-GRAVITY = 500                # Gravity (px/s²)
-DAMPING = 0.98               # Damping factor (lower value dissipates energy faster)
+ENLARGED_RADIUS = 100        # Held ball radius
+GRAVITY = 500                # Gravity in px/s²
+DAMPING = 0.98               # Global damping (applied during integration)
 VELOCITY_CAP = 300         # Maximum allowed speed
 MAX_SPEED_FOR_COLOR = 750  # Speed at which ball color is fully red
 SCATTER_FORCE = 500        # Base velocity increment on Space press
 VELOCITY_ZERO_THRESHOLD = 0.1  # Snap tiny speeds to zero
 
-# For floor stabilization: if after update a free ball is at the bottom and its vertical speed is low, snap it.
-FLOOR_SNAP_VY_THRESHOLD = 5   # px/s
-FLOOR_SNAP_TOLERANCE = 1      # pixel
+# Floor snapping parameters:
+FLOOR_SNAP_TOLERANCE = 3     # Tolerance (pixels) near the floor for snapping
+FLOOR_SNAP_VY_THRESHOLD = 10 # If vertical speed is below this, snap to floor
 
-# Grid settings: use a fixed cell size of 80 pixels (non-fullscreen cell size)
+# Extra (neighbor-based) damping parameters (viscosity)
+NEIGHBOR_DAMPING_BASE = 0.90  # Each touching neighbor multiplies velocity by 0.90
+NEIGHBOR_DAMPING_MAX = 6      # Count up to 6 neighbors
+# VISCOSITY parameter controls the extra damping effect:
+# Set VISCOSITY = 0.0 for nearly zero extra damping (i.e. restore prior behavior)
+VISCOSITY = 0.0
+
+# Grid settings: fixed cell size of 80 pixels (same as non-fullscreen)
 DEFAULT_CELL_SIZE = 80
-CELL_SIZE = DEFAULT_CELL_SIZE  # remains fixed even in fullscreen
+CELL_SIZE = DEFAULT_CELL_SIZE  # Remains fixed regardless of resolution
 
 # Fullscreen control:
 fullscreen = False
@@ -39,16 +45,13 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 # === Ball Class (PBD-style Integration) ===
 class Ball:
     def __init__(self, x, y):
-        # Current position:
-        self.x = x
+        self.x = x              # Current position
         self.y = y
-        # Velocity:
-        self.vx = 0.0
+        self.vx = 0.0           # Velocity
         self.vy = 0.0
         self.radius = BALL_RADIUS
-        self.held = False  # When True, the ball is fixed to the mouse.
-        # Predicted position (for constraint solving):
-        self.px = x
+        self.held = False       # True if controlled by the mouse
+        self.px = x             # Predicted position (for constraint solving)
         self.py = y
 
     def apply_gravity(self, dt):
@@ -61,7 +64,6 @@ class Ball:
             self.py = self.y + self.vy * dt
 
     def enforce_boundaries(self):
-        # Clamp predicted positions so that the ball remains fully inside the client area.
         if self.px - self.radius < 0:
             self.px = self.radius
         if self.px + self.radius > WIDTH:
@@ -71,10 +73,16 @@ class Ball:
         if self.py + self.radius > HEIGHT:
             self.py = HEIGHT - self.radius
 
-    def update_from_prediction(self, dt):
+    def update_from_prediction(self, dt, grid):
         if not self.held:
             new_vx = (self.px - self.x) / dt
             new_vy = (self.py - self.y) / dt
+            # Count touching neighbors using predicted positions.
+            n = count_touching_neighbors(self, grid)
+            # Extra damping factor: interpolate between no extra damping (1.0) and full extra damping.
+            extra_damping = (1 - VISCOSITY) + VISCOSITY * (NEIGHBOR_DAMPING_BASE ** n)
+            new_vx *= extra_damping
+            new_vy *= extra_damping
             speed = math.hypot(new_vx, new_vy)
             if speed > VELOCITY_CAP:
                 scale = VELOCITY_CAP / speed
@@ -84,10 +92,11 @@ class Ball:
             self.vy = new_vy
             self.x = self.px
             self.y = self.py
-            # If the ball is nearly resting on the floor, snap it.
+            # Floor snap: if nearly resting on the floor, force a stable position.
             if self.y + self.radius >= HEIGHT - FLOOR_SNAP_TOLERANCE and abs(self.vy) < FLOOR_SNAP_VY_THRESHOLD:
                 self.y = HEIGHT - self.radius
                 self.vy = 0
+                self.px = self.x
                 self.py = self.y
         else:
             self.vx = 0
@@ -97,11 +106,11 @@ class Ball:
 
     def draw(self, surf):
         if self.held:
-            color = (255, 255, 0)  # Held ball is yellow.
+            color = (255, 255, 0)
         else:
             speed = math.hypot(self.vx, self.vy)
             if speed < 1:
-                color = (0, 255, 0)  # Nearly static: green.
+                color = (0, 255, 0)
             else:
                 ratio = min(speed / MAX_SPEED_FOR_COLOR, 1.0)
                 r = int(255 * ratio)
@@ -118,9 +127,8 @@ class Grid:
         self.cells.clear()
 
     def add(self, ball):
-        # Use fixed DEFAULT_CELL_SIZE.
-        cell_x = int(ball.x // DEFAULT_CELL_SIZE)
-        cell_y = int(ball.y // DEFAULT_CELL_SIZE)
+        cell_x = int(ball.px // DEFAULT_CELL_SIZE)
+        cell_y = int(ball.py // DEFAULT_CELL_SIZE)
         key = (cell_x, cell_y)
         if key not in self.cells:
             self.cells[key] = []
@@ -128,8 +136,8 @@ class Grid:
 
     def get_neighbors(self, ball):
         neighbors = []
-        cell_x = int(ball.x // DEFAULT_CELL_SIZE)
-        cell_y = int(ball.y // DEFAULT_CELL_SIZE)
+        cell_x = int(ball.px // DEFAULT_CELL_SIZE)
+        cell_y = int(ball.py // DEFAULT_CELL_SIZE)
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
                 key = (cell_x + dx, cell_y + dy)
@@ -137,10 +145,20 @@ class Grid:
                     neighbors.extend(self.cells[key])
         return neighbors
 
-# === Functions for Dynamic Ball Management ===
+# === Helper Function: Count Touching Neighbors ===
+def count_touching_neighbors(ball, grid):
+    count = 0
+    for other in grid.get_neighbors(ball):
+        if other is ball:
+            continue
+        dx = ball.px - other.px
+        dy = ball.py - other.py
+        if math.hypot(dx, dy) < (ball.radius + other.radius + 1):
+            count += 1
+    return min(count, NEIGHBOR_DAMPING_MAX)
 
+# === Functions for Dynamic Ball Management ===
 def add_balls_top(num):
-    """Add 'num' new non-overlapping balls randomly in the top 100 pixels of the client area."""
     global balls, WIDTH, HEIGHT
     count = 0
     attempts = 0
@@ -159,7 +177,6 @@ def add_balls_top(num):
         attempts += 1
 
 def remove_random_balls(num):
-    """Remove 'num' random balls from the scene."""
     global balls
     if len(balls) <= num:
         balls = []
@@ -169,8 +186,6 @@ def remove_random_balls(num):
             balls.remove(b)
 
 def reposition_ball(ball, all_balls):
-    """Reposition a ball randomly in the top region (y between BALL_RADIUS and BALL_RADIUS+100)
-       ensuring no overlap with any other ball."""
     attempts = 0
     while attempts < 100:
         candidate_x = random.uniform(BALL_RADIUS, WIDTH - BALL_RADIUS)
@@ -195,8 +210,6 @@ def reposition_ball(ball, all_balls):
     ball.py = ball.y
 
 def toggle_fullscreen():
-    """Toggle fullscreen mode to 1920x1080. On toggling, reposition any ball that is out-of-bound
-       or too near the bottom by adding it randomly at the top."""
     global fullscreen, WIDTH, HEIGHT, screen, balls
     fullscreen = not fullscreen
     if fullscreen:
@@ -205,15 +218,14 @@ def toggle_fullscreen():
     else:
         WIDTH, HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    # CELL_SIZE remains fixed at DEFAULT_CELL_SIZE.
+    # CELL_SIZE remains fixed.
     for b in balls:
         if (b.x - b.radius < 0 or b.x + b.radius > WIDTH or
             b.y - b.radius < 0 or b.y + b.radius > HEIGHT or
-            b.y > HEIGHT - 150):  # if too near the bottom
+            b.y > HEIGHT - 150):
             reposition_ball(b, balls)
 
 def add_scatter(balls):
-    """Each Space press adds a random velocity increment to every free ball."""
     for ball in balls:
         if not ball.held:
             angle = random.uniform(0, 2 * math.pi)
@@ -238,14 +250,11 @@ while len(balls) < BALL_COUNT and attempts < 10000:
     attempts += 1
 
 grid = Grid()
-selected_ball = None  # Currently held ball (if any)
+selected_ball = None
 
-# === Constraint Solver (Single-Pass) ===
 def solve_constraints(balls):
-    # Enforce boundaries on predicted positions.
     for ball in balls:
         ball.enforce_boundaries()
-    # For each ball, check its neighbors and resolve overlaps.
     for ball in balls:
         neighbors = grid.get_neighbors(ball)
         for other in neighbors:
@@ -274,15 +283,12 @@ def solve_constraints(balls):
                     other.px += ux * correction
                     other.py += uy * correction
 
-# === Main Loop ===
 running = True
 while running:
-    dt = clock.tick(FPS) / 1000  # Delta time in seconds
+    dt = clock.tick(FPS) / 1000
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-
-        # --- Key Events ---
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 running = False
@@ -294,10 +300,8 @@ while running:
                 remove_random_balls(20)
             if event.key == pygame.K_F11:
                 toggle_fullscreen()
-
-        # --- Mouse Events ---
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1:  # Left click
+            if event.button == 1:
                 mx, my = pygame.mouse.get_pos()
                 for ball in balls:
                     if math.hypot(mx - ball.x, my - ball.y) < ball.radius:
@@ -311,7 +315,6 @@ while running:
                 selected_ball.radius = BALL_RADIUS
                 selected_ball = None
 
-    # --- Held Ball Tracking ---
     if selected_ball:
         mx, my = pygame.mouse.get_pos()
         selected_ball.px = mx
@@ -321,25 +324,31 @@ while running:
         selected_ball.vx = 0
         selected_ball.vy = 0
 
-    # --- Physics Integration ---
     for ball in balls:
         if not ball.held:
             ball.apply_gravity(dt)
         ball.integrate(dt)
 
-    # --- Build the Grid ---
     grid.clear()
     for ball in balls:
         grid.add(ball)
 
-    # --- Constraint Solving ---
     solve_constraints(balls)
 
-    # --- Update Velocities and Positions from Predictions ---
+    grid.clear()
     for ball in balls:
-        ball.update_from_prediction(dt)
+        grid.add(ball)
 
-    # --- Rendering ---
+    for ball in balls:
+        ball.update_from_prediction(dt, grid)
+
+    for ball in balls:
+        if not ball.held and (ball.y + ball.radius >= HEIGHT - FLOOR_SNAP_TOLERANCE) and (abs(ball.vy) < FLOOR_SNAP_VY_THRESHOLD):
+            ball.y = HEIGHT - ball.radius
+            ball.vy = 0
+            ball.px = ball.x
+            ball.py = ball.y
+
     screen.fill((0, 0, 0))
     for ball in balls:
         ball.draw(screen)
