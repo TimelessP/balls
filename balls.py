@@ -16,10 +16,10 @@ BALL_RADIUS = 15             # Normal ball radius
 ENLARGED_RADIUS = 100        # Held-ball (enlarged) radius (for left-click held balls)
 GRAVITY = 500                # Gravity in px/s²
 DAMPING = 0.98               # Global damping (applied during integration)
-VELOCITY_CAP = 300         # Normal maximum allowed speed
-THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can go up to twice the normal cap
-MAX_SPEED_FOR_COLOR = 750  # Speed at which ball color is fully red
-SCATTER_FORCE = 500        # Base velocity increment on Space press
+VELOCITY_CAP = 300           # Normal maximum allowed speed
+THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can go faster
+MAX_SPEED_FOR_COLOR = 750    # Speed at which ball color is fully red
+SCATTER_FORCE = 500          # Base velocity increment on Space press
 VELOCITY_ZERO_THRESHOLD = 0.1  # Snap tiny speeds to zero
 
 # Floor snapping parameters:
@@ -31,7 +31,7 @@ NEIGHBOR_DAMPING_BASE = 0.90  # Each touching neighbor multiplies velocity by 0.
 NEIGHBOR_DAMPING_MAX = 6      # Count up to 6 neighbors
 VISCOSITY = 0.0               # Set to 0.0 to nearly disable extra local damping
 
-# Grid settings: fixed cell size of 80 pixels (as in non-fullscreen mode)
+# Grid settings: fixed cell size of 80 pixels (same as non-fullscreen mode)
 DEFAULT_CELL_SIZE = 80
 CELL_SIZE = DEFAULT_CELL_SIZE  # Remains fixed regardless of resolution
 
@@ -68,10 +68,11 @@ class Ball:
         self.radius = BALL_RADIUS
         self.held = False       # True if controlled by left-click
         self.contained = False  # True if captured by container mode
-        self.offset = (0, 0)    # Relative offset from container center (if contained)
+        self.offset = (0, 0)    # Relative offset from container center when contained
         # Timers for size transitions:
         self.pickup_timer = 0.0
         self.release_timer = 0.0
+        self.release_start_radius = BALL_RADIUS  # New: store current radius on release
         self.px = x             # Predicted position (for constraint solving)
         self.py = y
 
@@ -86,11 +87,12 @@ class Ball:
             else:
                 self.radius = ENLARGED_RADIUS
         elif not self.held and self.release_timer > 0:
+            # Interpolate from release_start_radius down to BALL_RADIUS.
             self.release_timer -= dt
             if self.release_timer < 0:
                 self.release_timer = 0
             fraction = self.release_timer / RELEASE_TRANSITION_TIME
-            self.radius = BALL_RADIUS + (ENLARGED_RADIUS - BALL_RADIUS) * fraction
+            self.radius = BALL_RADIUS + (self.release_start_radius - BALL_RADIUS) * fraction
         else:
             self.radius = BALL_RADIUS
 
@@ -122,7 +124,6 @@ class Ball:
             new_vx *= extra_damping
             new_vy *= extra_damping
             speed = math.hypot(new_vx, new_vy)
-            # Use a higher cap if the ball is in release transition (just thrown)
             cap = THROWN_VELOCITY_CAP if self.release_timer > 0 else VELOCITY_CAP
             if speed > cap:
                 scale = cap / speed
@@ -407,7 +408,7 @@ while running:
                     if ball.contained:
                         ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
                         ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
-                        # Only set release_timer if the ball was enlarged
+                        # For container-thrown balls, only set release_timer if the ball was enlarged.
                         if ball.radius > BALL_RADIUS:
                             ball.release_timer = RELEASE_TRANSITION_TIME
                         ball.contained = False
@@ -417,7 +418,9 @@ while running:
                 selected_ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
                 selected_ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
                 selected_ball.held = False
+                # For held balls, record the current radius as starting point.
                 selected_ball.release_timer = RELEASE_TRANSITION_TIME
+                selected_ball.release_start_radius = selected_ball.radius
                 selected_ball = None
 
     if container is not None and not pygame.mouse.get_pressed()[2]:
