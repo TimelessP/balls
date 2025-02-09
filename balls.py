@@ -51,6 +51,9 @@ THROW_MULTIPLIER = 8.0  # On release, the object's velocity is multiplied by thi
 # Mouse velocity calculation settings:
 MOUSE_VELOCITY_TIME_WINDOW = 0.5  # seconds over which to compute average mouse velocity
 
+# Jitter settings for contained balls:
+CONTAINER_JITTER_SPEED = 50.0  # Maximum jitter speed in pixels per second
+
 # === Global Mouse History for "Throw" Feature ===
 mouse_history = []  # List of tuples: (timestamp, (x, y))
 current_mouse_velocity = (0, 0)
@@ -68,11 +71,11 @@ class Ball:
         self.radius = BALL_RADIUS
         self.held = False       # True if controlled by left-click
         self.contained = False  # True if captured by container mode
-        self.offset = (0, 0)    # Relative offset from container center (if contained)
+        self.offset = (0, 0)    # Relative offset from container center when contained
         # Timers for size transitions:
         self.pickup_timer = 0.0
         self.release_timer = 0.0
-        self.release_start_radius = BALL_RADIUS  # Store current size on release
+        self.release_start_radius = BALL_RADIUS  # Store size at release
         self.px = x             # Predicted position (for constraint solving)
         self.py = y
 
@@ -90,7 +93,6 @@ class Ball:
             self.release_timer -= dt
             if self.release_timer < 0:
                 self.release_timer = 0
-            # Interpolate from release_start_radius (the size at the moment of release) to BALL_RADIUS.
             fraction = self.release_timer / RELEASE_TRANSITION_TIME
             self.radius = BALL_RADIUS + (self.release_start_radius - BALL_RADIUS) * fraction
         else:
@@ -139,6 +141,7 @@ class Ball:
                 self.px = self.x
                 self.py = self.y
         else:
+            # For held or contained balls, we let their positions be updated externally.
             self.vx = 0
             self.vy = 0
             self.x = self.px
@@ -392,6 +395,7 @@ while running:
                     container = Container(mx, my, CONTAINER_RADIUS)
                     for ball in balls:
                         if math.hypot(ball.x - container.x, ball.y - container.y) < container.radius:
+                            # Instead of fixing the offset, initialize relative offset.
                             ball.contained = True
                             ball.offset = (ball.x - container.x, ball.y - container.y)
             elif event.button == 1:
@@ -408,7 +412,6 @@ while running:
                     if ball.contained:
                         ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
                         ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
-                        # Only set release timer if ball is enlarged:
                         if ball.radius > BALL_RADIUS:
                             ball.release_timer = RELEASE_TRANSITION_TIME
                         ball.contained = False
@@ -419,7 +422,6 @@ while running:
                 selected_ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
                 selected_ball.held = False
                 selected_ball.release_timer = RELEASE_TRANSITION_TIME
-                # Record the size at the moment of release for proper interpolation.
                 selected_ball.release_start_radius = selected_ball.radius
                 selected_ball = None
 
@@ -432,8 +434,22 @@ while running:
     if container is not None:
         mx, my = pygame.mouse.get_pos()
         container.update(mx, my)
+        # For contained balls, update their offset with a little random jitter.
         for ball in balls:
             if ball.contained:
+                # Update offset with random jitter:
+                jitter_dx = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
+                jitter_dy = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
+                new_offset_x = ball.offset[0] + jitter_dx
+                new_offset_y = ball.offset[1] + jitter_dy
+                # Clamp the offset so that the ball stays fully inside the container.
+                max_offset = container.radius - ball.radius
+                current_offset = math.hypot(new_offset_x, new_offset_y)
+                if current_offset > max_offset:
+                    scale = max_offset / current_offset
+                    new_offset_x *= scale
+                    new_offset_y *= scale
+                ball.offset = (new_offset_x, new_offset_y)
                 ball.x = container.x + ball.offset[0]
                 ball.y = container.y + ball.offset[1]
                 ball.px = ball.x
@@ -523,7 +539,6 @@ while running:
             ball.py = ball.y
 
     # --- Global Special-Object Check ---
-    # Special object: current held ball or container, if any.
     special_object = None
     if container is not None:
         special_object = container
@@ -537,9 +552,8 @@ while running:
             dy = ball.y - special_object.y
             dist = math.hypot(dx, dy)
             min_dist = ball.radius + special_object.radius
-            if dist < min_dist and dist != 0:
+            if dist < min_dist and dist > 0:
                 overlap = min_dist - dist
-                # Push the free ball away from the special object
                 ball.x += (dx / dist) * overlap
                 ball.y += (dy / dist) * overlap
                 ball.px = ball.x
