@@ -13,7 +13,7 @@ clock = pygame.time.Clock()
 # Simulation parameters:
 BALL_COUNT = 500
 BALL_RADIUS = 15             # Normal ball radius
-ENLARGED_RADIUS = 100        # Held-ball radius (for left-click held balls)
+ENLARGED_RADIUS = 100        # Held-ball (enlarged) radius (for left-click held balls)
 GRAVITY = 500                # Gravity in px/s²
 DAMPING = 0.98               # Global damping (applied during integration)
 VELOCITY_CAP = 300         # Maximum allowed speed
@@ -28,10 +28,10 @@ FLOOR_SNAP_VY_THRESHOLD = 10 # If vertical speed is below this, snap to floor
 # Extra (neighbor-based) damping (viscosity) parameters:
 NEIGHBOR_DAMPING_BASE = 0.90  # Each touching neighbor multiplies velocity by 0.90
 NEIGHBOR_DAMPING_MAX = 6      # Count up to 6 neighbors
-# VISCOSITY parameter: set to 0.0 to nearly disable extra local damping (i.e. restore prior behavior)
+# VISCOSITY: set to 0.0 to nearly disable extra local damping (i.e. restore prior behavior)
 VISCOSITY = 0.0
 
-# Grid settings: fixed cell size of 80 pixels (non-fullscreen cell size)
+# Grid settings: fixed cell size of 80 pixels (same as non-fullscreen mode)
 DEFAULT_CELL_SIZE = 80
 CELL_SIZE = DEFAULT_CELL_SIZE  # Remains fixed regardless of resolution
 
@@ -41,13 +41,19 @@ CONTAINER_RADIUS = 150  # Radius of the container circle
 # Fullscreen control:
 fullscreen = False
 
-# === Global Mouse Tracking for "Throw" Feature ===
-# These globals are used to track the mouse position and compute its velocity when a held object is active.
-last_mouse_pos = None
-current_mouse_velocity = (0, 0)
+# Size transition parameters:
+PICKUP_TRANSITION_TIME = 1.0   # Time (in seconds) for a ball to grow when picked up
+RELEASE_TRANSITION_TIME = 3.0  # Time (in seconds) for a ball to shrink after release
+
+# Throw multiplier:
+THROW_MULTIPLIER = 2.0         # On release, the object's velocity is doubled
 
 # === Create Display Surface ===
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
+# === Global Mouse Tracking for "Throw" Feature ===
+last_mouse_pos = None
+current_mouse_velocity = (0, 0)
 
 # === Ball Class ===
 class Ball:
@@ -59,9 +65,33 @@ class Ball:
         self.radius = BALL_RADIUS
         self.held = False       # True if controlled by left-click
         self.contained = False  # True if captured by container mode
-        self.offset = (0, 0)    # Relative offset from container center (if contained)
+        self.offset = (0, 0)    # Relative offset from container center when contained
+        # Timers for size transitions:
+        self.pickup_timer = 0.0   # When picked up, set to PICKUP_TRANSITION_TIME
+        self.release_timer = 0.0  # When released, set to RELEASE_TRANSITION_TIME
         self.px = x             # Predicted position (for constraint solving)
         self.py = y
+
+    def update_size(self, dt):
+        # If held (pickup transition)
+        if self.held:
+            if self.pickup_timer > 0:
+                self.pickup_timer -= dt
+                if self.pickup_timer < 0:
+                    self.pickup_timer = 0
+                fraction = 1 - (self.pickup_timer / PICKUP_TRANSITION_TIME)
+                self.radius = BALL_RADIUS + (ENLARGED_RADIUS - BALL_RADIUS) * fraction
+            else:
+                self.radius = ENLARGED_RADIUS
+        # If not held but in release transition:
+        elif self.release_timer > 0:
+            self.release_timer -= dt
+            if self.release_timer < 0:
+                self.release_timer = 0
+            fraction = self.release_timer / RELEASE_TRANSITION_TIME
+            self.radius = BALL_RADIUS + (ENLARGED_RADIUS - BALL_RADIUS) * fraction
+        else:
+            self.radius = BALL_RADIUS
 
     def apply_gravity(self, dt):
         if not self.held and not self.contained:
@@ -105,7 +135,6 @@ class Ball:
                 self.px = self.x
                 self.py = self.y
         else:
-            # For held or contained balls, the velocity remains zero.
             self.vx = 0
             self.vy = 0
             self.x = self.px
@@ -125,7 +154,7 @@ class Ball:
                 r = int(255 * ratio)
                 g = int(255 * (1 - ratio))
                 color = (r, g, 0)
-        pygame.draw.circle(surf, color, (int(self.x), int(self.y)), self.radius)
+        pygame.draw.circle(surf, color, (int(self.x), int(self.y)), int(self.radius))
 
 # === Container Class ===
 class Container:
@@ -308,7 +337,7 @@ while len(balls) < BALL_COUNT and attempts < 10000:
         balls.append(candidate)
     attempts += 1
 
-container = None  # Global container (for container mode)
+container = None  # Global container, initially None.
 grid = Grid()
 selected_ball = None  # For normal held-ball mode (left-click)
 
@@ -351,35 +380,30 @@ while running:
                     if math.hypot(mx - ball.x, my - ball.y) < ball.radius:
                         selected_ball = ball
                         ball.held = True
-                        ball.radius = ENLARGED_RADIUS
+                        ball.pickup_timer = PICKUP_TRANSITION_TIME  # Begin growth transition.
                         break
         if event.type == pygame.MOUSEBUTTONUP:
             # Right-click release ends container mode.
             if event.button == 3 and container is not None:
-                # On release, assign container's last mouse velocity to all contained balls.
                 for ball in balls:
                     if ball.contained:
-                        ball.vx = current_mouse_velocity[0]
-                        ball.vy = current_mouse_velocity[1]
+                        ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
+                        ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
                         ball.contained = False
                         ball.offset = (0, 0)
                 container = None
             # Left-click release ends held-ball mode.
             if event.button == 1 and selected_ball is not None:
-                # On release, assign the current mouse velocity to the held ball.
-                selected_ball.vx = current_mouse_velocity[0]
-                selected_ball.vy = current_mouse_velocity[1]
+                selected_ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
+                selected_ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
                 selected_ball.held = False
-                selected_ball.radius = BALL_RADIUS
+                selected_ball.release_timer = RELEASE_TRANSITION_TIME  # Begin shrink transition.
                 selected_ball = None
 
     # Update global mouse tracking for "throw" feature.
-    # If either a held ball or container is active, track the mouse.
     if selected_ball is not None or container is not None:
         current_mouse_pos = pygame.mouse.get_pos()
         if last_mouse_pos is not None:
-            # Compute mouse velocity.
-            # Use dt; if dt is zero, assume FPS.
             effective_dt = dt if dt > 0 else 1 / FPS
             dx = current_mouse_pos[0] - last_mouse_pos[0]
             dy = current_mouse_pos[1] - last_mouse_pos[1]
@@ -391,7 +415,7 @@ while running:
         last_mouse_pos = None
         current_mouse_velocity = (0, 0)
 
-    # Also, if container mode is active but right button is no longer held, disable container mode.
+    # If container mode is active but right button is no longer held, disable container mode.
     if container is not None and not pygame.mouse.get_pressed()[2]:
         for ball in balls:
             ball.contained = False
@@ -419,6 +443,24 @@ while running:
         selected_ball.vx = 0
         selected_ball.vy = 0
 
+    # --- Update Size Transitions ---
+    for ball in balls:
+        if ball.held:
+            if ball.pickup_timer > 0:
+                ball.pickup_timer -= dt
+                if ball.pickup_timer < 0:
+                    ball.pickup_timer = 0
+                fraction = 1 - (ball.pickup_timer / PICKUP_TRANSITION_TIME)
+                ball.radius = BALL_RADIUS + (ENLARGED_RADIUS - BALL_RADIUS) * fraction
+        elif not ball.held and ball.release_timer > 0:
+            ball.release_timer -= dt
+            if ball.release_timer < 0:
+                ball.release_timer = 0
+            fraction = ball.release_timer / RELEASE_TRANSITION_TIME
+            ball.radius = BALL_RADIUS + (ENLARGED_RADIUS - BALL_RADIUS) * fraction
+        else:
+            ball.radius = BALL_RADIUS
+
     for ball in balls:
         if not ball.held and not ball.contained:
             ball.apply_gravity(dt)
@@ -427,9 +469,15 @@ while running:
     grid.clear()
     for ball in balls:
         grid.add(ball)
-    # Do not add container to grid here; container collisions are handled separately.
+    if container is not None:
+        # Add container using its actual position.
+        cell_x = int(container.x // DEFAULT_CELL_SIZE)
+        cell_y = int(container.y // DEFAULT_CELL_SIZE)
+        key = (cell_x, cell_y)
+        if key not in grid.cells:
+            grid.cells[key] = []
+        grid.cells[key].append(container)
 
-    # --- Solve Constraints for Free Balls ---
     def solve_constraints(objects):
         for obj in objects:
             obj.enforce_boundaries()
@@ -460,28 +508,21 @@ while running:
                         obj.py -= uy * correction
                         other.px += ux * correction
                         other.py += uy * correction
-
     objects = balls.copy()
-    solve_constraints(objects)
-
-    # --- Solve Container-Free Ball Collisions Separately ---
     if container is not None:
-        for ball in balls:
-            if not ball.contained:
-                dx = ball.px - container.x
-                dy = ball.py - container.y
-                dist = math.hypot(dx, dy)
-                min_dist = ball.radius + container.radius
-                if dist < min_dist and dist > 0:
-                    overlap = min_dist - dist
-                    ux = dx / dist
-                    uy = dy / dist
-                    ball.px += ux * overlap
-                    ball.py += uy * overlap
+        objects.append(container)
+    solve_constraints(objects)
 
     grid.clear()
     for ball in balls:
         grid.add(ball)
+    if container is not None:
+        cell_x = int(container.x // DEFAULT_CELL_SIZE)
+        cell_y = int(container.y // DEFAULT_CELL_SIZE)
+        key = (cell_x, cell_y)
+        if key not in grid.cells:
+            grid.cells[key] = []
+        grid.cells[key].append(container)
     for ball in balls:
         ball.update_from_prediction(dt, grid)
 
