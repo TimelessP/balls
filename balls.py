@@ -17,7 +17,7 @@ ENLARGED_RADIUS = 100        # Held-ball (enlarged) radius (for left-click held 
 GRAVITY = 500                # Gravity in px/s²
 DAMPING = 0.98               # Global damping (applied during integration)
 VELOCITY_CAP = 300           # Normal maximum allowed speed
-THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can go faster
+THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can go up to twice the normal cap
 MAX_SPEED_FOR_COLOR = 750    # Speed at which ball color is fully red
 SCATTER_FORCE = 500          # Base velocity increment on Space press
 VELOCITY_ZERO_THRESHOLD = 0.1  # Snap tiny speeds to zero
@@ -68,11 +68,11 @@ class Ball:
         self.radius = BALL_RADIUS
         self.held = False       # True if controlled by left-click
         self.contained = False  # True if captured by container mode
-        self.offset = (0, 0)    # Relative offset from container center when contained
+        self.offset = (0, 0)    # Relative offset from container center (if contained)
         # Timers for size transitions:
         self.pickup_timer = 0.0
         self.release_timer = 0.0
-        self.release_start_radius = BALL_RADIUS  # New: store current radius on release
+        self.release_start_radius = BALL_RADIUS  # Store current size on release
         self.px = x             # Predicted position (for constraint solving)
         self.py = y
 
@@ -87,10 +87,10 @@ class Ball:
             else:
                 self.radius = ENLARGED_RADIUS
         elif not self.held and self.release_timer > 0:
-            # Interpolate from release_start_radius down to BALL_RADIUS.
             self.release_timer -= dt
             if self.release_timer < 0:
                 self.release_timer = 0
+            # Interpolate from release_start_radius (the size at the moment of release) to BALL_RADIUS.
             fraction = self.release_timer / RELEASE_TRANSITION_TIME
             self.radius = BALL_RADIUS + (self.release_start_radius - BALL_RADIUS) * fraction
         else:
@@ -408,7 +408,7 @@ while running:
                     if ball.contained:
                         ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
                         ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
-                        # For container-thrown balls, only set release_timer if the ball was enlarged.
+                        # Only set release timer if ball is enlarged:
                         if ball.radius > BALL_RADIUS:
                             ball.release_timer = RELEASE_TRANSITION_TIME
                         ball.contained = False
@@ -418,8 +418,8 @@ while running:
                 selected_ball.vx = current_mouse_velocity[0] * THROW_MULTIPLIER
                 selected_ball.vy = current_mouse_velocity[1] * THROW_MULTIPLIER
                 selected_ball.held = False
-                # For held balls, record the current radius as starting point.
                 selected_ball.release_timer = RELEASE_TRANSITION_TIME
+                # Record the size at the moment of release for proper interpolation.
                 selected_ball.release_start_radius = selected_ball.radius
                 selected_ball = None
 
@@ -521,6 +521,29 @@ while running:
             ball.vy = 0
             ball.px = ball.x
             ball.py = ball.y
+
+    # --- Global Special-Object Check ---
+    # Special object: current held ball or container, if any.
+    special_object = None
+    if container is not None:
+        special_object = container
+    elif selected_ball is not None:
+        special_object = selected_ball
+    if special_object is not None:
+        for ball in balls:
+            if ball is special_object:
+                continue
+            dx = ball.x - special_object.x
+            dy = ball.y - special_object.y
+            dist = math.hypot(dx, dy)
+            min_dist = ball.radius + special_object.radius
+            if dist < min_dist and dist != 0:
+                overlap = min_dist - dist
+                # Push the free ball away from the special object
+                ball.x += (dx / dist) * overlap
+                ball.y += (dy / dist) * overlap
+                ball.px = ball.x
+                ball.py = ball.y
 
     screen.fill((0, 0, 0))
     for ball in balls:
