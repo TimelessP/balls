@@ -13,27 +13,27 @@ clock = pygame.time.Clock()
 # Simulation parameters:
 BALL_COUNT = 500
 BALL_RADIUS = 15             # Normal ball radius
-ENLARGED_RADIUS = 100        # Held-ball (enlarged) radius (for left-click held balls)
-GRAVITY = 500                # Gravity in px/s²
+ENLARGED_RADIUS = 100        # Held-ball (enlarged) radius
+GRAVITY = 500                # Gravity (px/s²)
 DAMPING = 0.98               # Global damping (applied during integration)
 VELOCITY_CAP = 300           # Normal maximum allowed speed
-THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can go up to twice the normal cap
+THROWN_VELOCITY_CAP = VELOCITY_CAP * 2  # Thrown balls can exceed normal speed
 MAX_SPEED_FOR_COLOR = 750    # Speed at which ball color is fully red
-SCATTER_FORCE = 500          # Base velocity increment on Space press
-VELOCITY_ZERO_THRESHOLD = 0.1  # Snap tiny speeds to zero
+SCATTER_FORCE = 500          # Base velocity for scatter
+VELOCITY_ZERO_THRESHOLD = 0.1  # Threshold to snap tiny speeds to zero
 
 # Floor snapping parameters:
-FLOOR_SNAP_TOLERANCE = 3     # Tolerance (pixels) for snapping to the floor
-FLOOR_SNAP_VY_THRESHOLD = 10 # If vertical speed is below this, snap to floor
+FLOOR_SNAP_TOLERANCE = 3     
+FLOOR_SNAP_VY_THRESHOLD = 10 
 
-# Extra (neighbor-based) damping (viscosity) parameters:
-NEIGHBOR_DAMPING_BASE = 0.90  # Each touching neighbor multiplies velocity by 0.90
-NEIGHBOR_DAMPING_MAX = 6      # Count up to 6 neighbors
-VISCOSITY = 0.0               # Set to 0.0 to nearly disable extra local damping
+# Extra damping parameters:
+NEIGHBOR_DAMPING_BASE = 0.90  
+NEIGHBOR_DAMPING_MAX = 6      
+VISCOSITY = 0.0               
 
-# Grid settings: fixed cell size of 80 pixels (same as non-fullscreen mode)
+# Grid settings:
 DEFAULT_CELL_SIZE = 80
-CELL_SIZE = DEFAULT_CELL_SIZE  # Remains fixed regardless of resolution
+CELL_SIZE = DEFAULT_CELL_SIZE  
 
 # Container parameters:
 CONTAINER_RADIUS = 150  # Radius of the container circle
@@ -42,41 +42,57 @@ CONTAINER_RADIUS = 150  # Radius of the container circle
 fullscreen = False
 
 # Size transition parameters:
-PICKUP_TRANSITION_TIME = 1.0   # Time for a ball to grow when picked up (seconds)
-RELEASE_TRANSITION_TIME = 3.0  # Time for a ball to shrink after release (seconds)
+PICKUP_TRANSITION_TIME = 1.0   # Seconds for a ball to grow when picked up
+RELEASE_TRANSITION_TIME = 3.0  # Seconds for a ball to shrink after release
 
 # Throw multiplier:
-THROW_MULTIPLIER = 8.0  # On release, the object's velocity is multiplied by this factor
+THROW_MULTIPLIER = 8.0  # Multiplier for throw velocity
 
 # Mouse velocity calculation settings:
-MOUSE_VELOCITY_TIME_WINDOW = 0.5  # seconds over which to compute average mouse velocity
+MOUSE_VELOCITY_TIME_WINDOW = 0.5  # Seconds over which to compute average mouse velocity
 
-# Jitter settings for contained balls:
-CONTAINER_JITTER_SPEED = 50.0  # Maximum jitter speed in pixels per second
+# Jitter and spring settings for contained balls:
+CONTAINER_JITTER_SPEED = 50.0     # Maximum jitter speed (pixels per second)
+OFFSET_SPRING_THRESHOLD = 0.7      # Fraction of max offset beyond which spring is applied
+OFFSET_SPRING_FACTOR = 0.9         # Factor to pull offset inward if exceeded
 
-# === Global Mouse History for "Throw" Feature ===
-mouse_history = []  # List of tuples: (timestamp, (x, y))
+# === Global Variables ===
+mouse_history = []  # List of (timestamp, (x, y))
 current_mouse_velocity = (0, 0)
 
-# === Create Display Surface ===
+# Create the display surface and assign it to the global variable 'screen'
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 
-# === Ball Class ===
+# === Helper Function: Count Touching Neighbors ===
+def count_touching_neighbors(ball, grid):
+    count = 0
+    for other in grid.get_neighbors(ball):
+        if other is ball:
+            continue
+        if isinstance(other, Container):
+            continue
+        dx = ball.px - other.px
+        dy = ball.py - other.py
+        if math.hypot(dx, dy) < (ball.radius + other.radius + 1):
+            count += 1
+    return min(count, NEIGHBOR_DAMPING_MAX)
+
+# === Class Definitions ===
+
 class Ball:
     def __init__(self, x, y):
         self.x = x              # Current position
         self.y = y
-        self.vx = 0.0           # Velocity
+        self.vx = 0.0           # Velocity components
         self.vy = 0.0
         self.radius = BALL_RADIUS
-        self.held = False       # True if controlled by left-click
-        self.contained = False  # True if captured by container mode
-        self.offset = (0, 0)    # Relative offset from container center when contained
-        # Timers for size transitions:
+        self.held = False       # Held by left-click
+        self.contained = False  # Captured by container mode
+        self.offset = (0, 0)    # Relative offset if contained
         self.pickup_timer = 0.0
         self.release_timer = 0.0
-        self.release_start_radius = BALL_RADIUS  # Store size at release
-        self.px = x             # Predicted position (for constraint solving)
+        self.release_start_radius = BALL_RADIUS  # Size at moment of release
+        self.px = x             # Predicted position (for collisions)
         self.py = y
 
     def update_size(self, dt):
@@ -141,7 +157,6 @@ class Ball:
                 self.px = self.x
                 self.py = self.y
         else:
-            # For held or contained balls, we let their positions be updated externally.
             self.vx = 0
             self.vy = 0
             self.x = self.px
@@ -151,7 +166,7 @@ class Ball:
         if self.held:
             color = (255, 255, 0)
         elif self.contained:
-            color = (0, 255, 255)  # Cyan for contained balls.
+            color = (0, 255, 255)  # Cyan for contained balls
         else:
             speed = math.hypot(self.vx, self.vy)
             if speed < 1:
@@ -163,7 +178,7 @@ class Ball:
                 color = (r, g, 0)
         pygame.draw.circle(surf, color, (int(self.x), int(self.y)), int(self.radius))
 
-# === Container Class ===
+
 class Container:
     def __init__(self, x, y, radius):
         self.x = x              # Current position
@@ -191,7 +206,7 @@ class Container:
     def draw(self, surf):
         pygame.draw.circle(surf, (255, 255, 255), (int(self.x), int(self.y)), self.radius, 2)
 
-# === Grid Class (Fixed Cell Size) ===
+
 class Grid:
     def __init__(self):
         self.cells = {}  # Mapping: (cell_x, cell_y) -> list of objects
@@ -200,7 +215,6 @@ class Grid:
         self.cells.clear()
 
     def add(self, obj):
-        # For containers, use actual position; for others, use predicted positions.
         if isinstance(obj, Container):
             pos_x = obj.x
             pos_y = obj.y
@@ -231,19 +245,73 @@ class Grid:
                     neighbors.extend(self.cells[key])
         return neighbors
 
-# === Helper: Count Touching Neighbors for a Ball ===
-def count_touching_neighbors(ball, grid):
-    count = 0
-    for other in grid.get_neighbors(ball):
-        if other is ball:
-            continue
-        if isinstance(other, Container):
-            continue
-        dx = ball.px - other.px
-        dy = ball.py - other.py
-        if math.hypot(dx, dy) < (ball.radius + other.radius + 1):
-            count += 1
-    return min(count, NEIGHBOR_DAMPING_MAX)
+# === Collision Solver Functions ===
+
+def solve_free_constraints(objects):
+    for obj in objects:
+        obj.enforce_boundaries()
+    for obj in objects:
+        neighbors = grid.get_neighbors(obj)
+        for other in neighbors:
+            if other is obj:
+                continue
+            dx = other.px - obj.px
+            dy = other.py - obj.py
+            dist = math.hypot(dx, dy)
+            if dist == 0:
+                continue
+            min_dist = obj.radius + other.radius
+            if dist < min_dist:
+                overlap = min_dist - dist
+                ux = dx / dist
+                uy = dy / dist
+                if (hasattr(obj, 'held') and obj.held) or (hasattr(obj, 'contained') and obj.contained):
+                    other.px += ux * overlap
+                    other.py += uy * overlap
+                elif (hasattr(other, 'held') and other.held) or (hasattr(other, 'contained') and other.contained):
+                    obj.px -= ux * overlap
+                    obj.py -= uy * overlap
+                else:
+                    correction = overlap / 2
+                    obj.px -= ux * correction
+                    obj.py -= uy * correction
+                    other.px += ux * correction
+                    other.py += uy * correction
+
+def solve_contained_collisions(contained_objects, container):
+    # Solve collisions among contained balls:
+    for i in range(len(contained_objects)):
+        for j in range(i + 1, len(contained_objects)):
+            ball1 = contained_objects[i]
+            ball2 = contained_objects[j]
+            dx = ball2.x - ball1.x
+            dy = ball2.y - ball1.y
+            dist = math.hypot(dx, dy)
+            min_dist = ball1.radius + ball2.radius
+            if dist < min_dist and dist > 0:
+                overlap = min_dist - dist
+                shift_x = (dx / dist) * (overlap / 2)
+                shift_y = (dy / dist) * (overlap / 2)
+                ball1.x -= shift_x
+                ball1.y -= shift_y
+                ball2.x += shift_x
+                ball2.y += shift_y
+                ball1.px = ball1.x
+                ball1.py = ball1.y
+                ball2.px = ball2.x
+                ball2.py = ball2.y
+    # Force each contained ball to remain inside the container:
+    for ball in contained_objects:
+        dx = ball.x - container.x
+        dy = ball.y - container.y
+        dist = math.hypot(dx, dy)
+        max_offset = container.radius - ball.radius
+        if dist > max_offset and dist > 0:
+            overlap = dist - max_offset
+            ball.x -= (dx / dist) * overlap
+            ball.y -= (dy / dist) * overlap
+            ball.px = ball.x
+            ball.py = ball.y
 
 # === Dynamic Ball Management Functions ===
 def add_balls_top(num):
@@ -346,9 +414,8 @@ while len(balls) < BALL_COUNT and attempts < 10000:
 
 container = None  # Global container, initially None.
 grid = Grid()
-selected_ball = None  # For normal held-ball mode (left-click)
+selected_ball = None  # For held-ball mode (left-click)
 
-# Global mouse tracking using history over the last 0.5 seconds.
 mouse_history = []  # List of (timestamp, (x, y))
 current_mouse_velocity = (0, 0)
 
@@ -395,9 +462,15 @@ while running:
                     container = Container(mx, my, CONTAINER_RADIUS)
                     for ball in balls:
                         if math.hypot(ball.x - container.x, ball.y - container.y) < container.radius:
-                            # Instead of fixing the offset, initialize relative offset.
                             ball.contained = True
-                            ball.offset = (ball.x - container.x, ball.y - container.y)
+                            max_offset = container.radius - ball.radius
+                            r = math.sqrt(random.random()) * max_offset
+                            theta = random.uniform(0, 2*math.pi)
+                            ball.offset = (r * math.cos(theta), r * math.sin(theta))
+                            ball.x = container.x + ball.offset[0]
+                            ball.y = container.y + ball.offset[1]
+                            ball.px = ball.x
+                            ball.py = ball.y
             elif event.button == 1:
                 mx, my = pygame.mouse.get_pos()
                 for ball in balls:
@@ -434,26 +507,23 @@ while running:
     if container is not None:
         mx, my = pygame.mouse.get_pos()
         container.update(mx, my)
-        # For contained balls, update their offset with a little random jitter.
-        for ball in balls:
-            if ball.contained:
-                # Update offset with random jitter:
-                jitter_dx = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
-                jitter_dy = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
-                new_offset_x = ball.offset[0] + jitter_dx
-                new_offset_y = ball.offset[1] + jitter_dy
-                # Clamp the offset so that the ball stays fully inside the container.
-                max_offset = container.radius - ball.radius
-                current_offset = math.hypot(new_offset_x, new_offset_y)
-                if current_offset > max_offset:
-                    scale = max_offset / current_offset
-                    new_offset_x *= scale
-                    new_offset_y *= scale
-                ball.offset = (new_offset_x, new_offset_y)
-                ball.x = container.x + ball.offset[0]
-                ball.y = container.y + ball.offset[1]
-                ball.px = ball.x
-                ball.py = ball.y
+        # Update contained balls with jitter and ensure they stay inside the container.
+        contained_balls = [ball for ball in balls if ball.contained]
+        for ball in contained_balls:
+            jitter_dx = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
+            jitter_dy = random.uniform(-CONTAINER_JITTER_SPEED, CONTAINER_JITTER_SPEED) * dt
+            new_offset_x = ball.offset[0] + jitter_dx
+            new_offset_y = ball.offset[1] + jitter_dy
+            max_offset = container.radius - ball.radius
+            current_offset = math.hypot(new_offset_x, new_offset_y)
+            if current_offset > OFFSET_SPRING_THRESHOLD * max_offset:
+                new_offset_x *= OFFSET_SPRING_FACTOR
+                new_offset_y *= OFFSET_SPRING_FACTOR
+            ball.offset = (new_offset_x, new_offset_y)
+            ball.x = container.x + ball.offset[0]
+            ball.y = container.y + ball.offset[1]
+            ball.px = ball.x
+            ball.py = ball.y
 
     if selected_ball is not None:
         mx, my = pygame.mouse.get_pos()
@@ -466,14 +536,25 @@ while running:
 
     for ball in balls:
         ball.update_size(dt)
-
     for ball in balls:
         if not ball.held and not ball.contained:
             ball.apply_gravity(dt)
         ball.integrate(dt)
 
+    # --- Solve collisions for free balls ---
+    free_balls = [b for b in balls if not b.contained]
+    free_objects = free_balls.copy()
+    if container is not None:
+        free_objects.append(container)
+    solve_free_constraints(free_objects)
+
+    # --- Solve collisions among contained balls and enforce container boundaries ---
+    contained_balls = [b for b in balls if b.contained]
+    if container is not None and contained_balls:
+        solve_contained_collisions(contained_balls, container)
+
     grid.clear()
-    for ball in balls:
+    for ball in free_balls:
         grid.add(ball)
     if container is not None:
         cell_x = int(container.x // DEFAULT_CELL_SIZE)
@@ -482,53 +563,7 @@ while running:
         if key not in grid.cells:
             grid.cells[key] = []
         grid.cells[key].append(container)
-
-    def solve_constraints(objects):
-        for obj in objects:
-            obj.enforce_boundaries()
-        for obj in objects:
-            neighbors = grid.get_neighbors(obj)
-            for other in neighbors:
-                if other is obj:
-                    continue
-                dx = other.px - obj.px
-                dy = other.py - obj.py
-                dist = math.hypot(dx, dy)
-                if dist == 0:
-                    continue
-                min_dist = obj.radius + other.radius
-                if dist < min_dist:
-                    overlap = min_dist - dist
-                    ux = dx / dist
-                    uy = dy / dist
-                    if (hasattr(obj, 'held') and obj.held) or (hasattr(obj, 'contained') and obj.contained):
-                        other.px += ux * overlap
-                        other.py += uy * overlap
-                    elif (hasattr(other, 'held') and other.held) or (hasattr(other, 'contained') and other.contained):
-                        obj.px -= ux * overlap
-                        obj.py -= uy * overlap
-                    else:
-                        correction = overlap / 2
-                        obj.px -= ux * correction
-                        obj.py -= uy * correction
-                        other.px += ux * correction
-                        other.py += uy * correction
-    objects = balls.copy()
-    if container is not None:
-        objects.append(container)
-    solve_constraints(objects)
-
-    grid.clear()
-    for ball in balls:
-        grid.add(ball)
-    if container is not None:
-        cell_x = int(container.x // DEFAULT_CELL_SIZE)
-        cell_y = int(container.y // DEFAULT_CELL_SIZE)
-        key = (cell_x, cell_y)
-        if key not in grid.cells:
-            grid.cells[key] = []
-        grid.cells[key].append(container)
-    for ball in balls:
+    for ball in free_balls:
         ball.update_from_prediction(dt, grid)
 
     for ball in balls:
@@ -545,7 +580,7 @@ while running:
     elif selected_ball is not None:
         special_object = selected_ball
     if special_object is not None:
-        for ball in balls:
+        for ball in free_balls:
             if ball is special_object:
                 continue
             dx = ball.x - special_object.x
