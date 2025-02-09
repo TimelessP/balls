@@ -4,6 +4,8 @@ This project is a 2D ball simulation built using Python 3.11 and Pygame. It simu
 
 ![screenshot.png](screenshot.png)
 
+![demo.mp4](demo.mp4)
+
 
 ## Features
 
