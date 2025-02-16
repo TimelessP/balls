@@ -32,7 +32,7 @@ NEIGHBOR_DAMPING_MAX = 6
 VISCOSITY = 0.0               
 
 # Grid settings:
-DEFAULT_CELL_SIZE = 80
+DEFAULT_CELL_SIZE = 90
 CELL_SIZE = DEFAULT_CELL_SIZE  
 
 # Container parameters:
