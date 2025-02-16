@@ -373,7 +373,7 @@ def toggle_fullscreen():
         screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
     else:
         WIDTH, HEIGHT = DEFAULT_WIDTH, DEFAULT_HEIGHT
-        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
     for b in balls:
         if (b.x - b.radius < 0 or b.x + b.radius > WIDTH or
             b.y - b.radius < 0 or b.y + b.radius > HEIGHT or
