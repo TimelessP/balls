@@ -61,7 +61,7 @@ mouse_history = []  # List of (timestamp, (x, y))
 current_mouse_velocity = (0, 0)
 
 # Create the display surface and assign it to the global variable 'screen'
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 
 # === Helper Function: Count Touching Neighbors ===
 def count_touching_neighbors(ball, grid):
@@ -427,6 +427,24 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        if event.type == pygame.VIDEORESIZE:  # Detect window resizing
+            WIDTH, HEIGHT = event.w, event.h
+            # we can't do this whilst resizing because it destroys the window:
+            # screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+            for ball in balls:
+                if (ball.x - ball.radius < 0 or ball.x + ball.radius > WIDTH or
+                    ball.y - ball.radius < 0 or ball.y + ball.radius > HEIGHT or
+                    ball.y > HEIGHT - 150):
+                    reposition_ball(ball, balls)
+            if container is not None:
+                if (container.x - container.radius < 0 or container.x + container.radius > WIDTH or
+                    container.y - container.radius < 0 or container.y + container.radius > HEIGHT or
+                    container.y > HEIGHT - 150):
+                    container.x = WIDTH / 2
+                    container.y = BALL_RADIUS + 50
+                    container.px = container.x
+                    container.py = container.y
+
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_ESCAPE, pygame.K_q):
                 running = False
